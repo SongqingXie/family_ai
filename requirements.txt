@@ -3,4 +3,4 @@ langchain==0.2.0
 langchain-openai==0.1.25
 faiss-cpu==1.13.2
 numpy==1.26.4
-zhipuai==2.1.5
+zhipuai==2.1.5.20250825

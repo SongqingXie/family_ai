@@ -1,0 +1,617 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LangChain Agent V2 - 多用户版</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            padding: 20px;
+        }
+        
+        .container {
+            width: 100%;
+            max-width: 900px;
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+            height: 90vh;
+        }
+        
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 20px;
+            text-align: center;
+        }
+        
+        .header h1 { font-size: 24px; margin-bottom: 5px; }
+        .header .badge {
+            display: inline-block;
+            background: rgba(255,255,255,0.2);
+            padding: 4px 12px;
+            border-radius: 15px;
+            font-size: 12px;
+        }
+        
+        .user-info {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 10px 20px;
+            background: #f8f9fa;
+            border-bottom: 1px solid #e9ecef;
+        }
+        
+        .user-info .username {
+            font-weight: bold;
+            color: #667eea;
+        }
+        
+        .btn-small {
+            padding: 6px 12px;
+            border: none;
+            border-radius: 15px;
+            font-size: 12px;
+            cursor: pointer;
+            background: #dc3545;
+            color: white;
+        }
+        
+        .stats-bar {
+            display: flex;
+            justify-content: space-around;
+            padding: 10px;
+            background: #f8f9fa;
+            border-bottom: 1px solid #e9ecef;
+        }
+        
+        .stat-item { text-align: center; }
+        .stat-value { font-size: 20px; font-weight: bold; color: #667eea; }
+        .stat-label { font-size: 11px; color: #6c757d; margin-top: 3px; }
+        
+        .chat-container {
+            flex: 1;
+            overflow-y: auto;
+            padding: 20px;
+            background: #f8f9fa;
+        }
+        
+        .message {
+            margin-bottom: 15px;
+            display: flex;
+            animation: fadeIn 0.3s ease;
+        }
+        
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        
+        .message.user { flex-direction: row-reverse; }
+        
+        .avatar {
+            width: 35px; height: 35px; border-radius: 50%;
+            display: flex; align-items: center; justify-content: center;
+            font-size: 16px; flex-shrink: 0;
+        }
+        
+        .message.user .avatar { background: #667eea; margin-left: 8px; }
+        .message.assistant .avatar { background: #764ba2; margin-right: 8px; }
+        
+        .message-content {
+            max-width: 75%;
+            padding: 10px 14px;
+            border-radius: 16px;
+            word-wrap: break-word;
+            white-space: pre-wrap;
+            line-height: 1.5;
+            font-size: 14px;
+        }
+        
+        .message.user .message-content {
+            background: #667eea; color: white;
+            border-bottom-right-radius: 4px;
+        }
+        
+        .message.assistant .message-content {
+            background: white; color: #333;
+            border-bottom-left-radius: 4px;
+            box-shadow: 0 2px 6px rgba(0,0,0,0.1);
+        }
+        
+        .input-container {
+            padding: 15px;
+            background: white;
+            border-top: 1px solid #e9ecef;
+        }
+        
+        .input-wrapper {
+            display: flex;
+            gap: 8px;
+        }
+        
+        #message-input {
+            flex: 1;
+            padding: 10px 16px;
+            border: 2px solid #e9ecef;
+            border-radius: 20px;
+            font-size: 14px;
+            outline: none;
+        }
+        
+        #message-input:focus { border-color: #667eea; }
+        
+        #send-btn, #clear-btn {
+            padding: 10px 18px;
+            border: none;
+            border-radius: 20px;
+            font-size: 14px;
+            cursor: pointer;
+        }
+        
+        #send-btn {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+        }
+        
+        #clear-btn { background: #f8f9fa; color: #666; border: 1px solid #ddd; }
+        
+        .loading {
+            display: flex; align-items: center; gap: 5px;
+            color: #667eea; font-size: 13px;
+        }
+        
+        .loading span { animation: bounce 1.4s infinite ease-in-out both; }
+        .loading span:nth-child(1) { animation-delay: -0.32s; }
+        .loading span:nth-child(2) { animation-delay: -0.16s; }
+        
+        @keyframes bounce {
+            0%, 80%, 100% { transform: scale(0); }
+            40% { transform: scale(1); }
+        }
+        
+        /* 登录/注册界面 */
+        .auth-container {
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            height: 100%;
+            padding: 40px;
+        }
+        
+        .auth-box {
+            width: 100%;
+            max-width: 400px;
+            background: white;
+            padding: 40px;
+            border-radius: 20px;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.1);
+        }
+        
+        .auth-box h2 {
+            text-align: center;
+            margin-bottom: 30px;
+            color: #333;
+        }
+        
+        .form-group {
+            margin-bottom: 20px;
+        }
+        
+        .form-group label {
+            display: block;
+            margin-bottom: 8px;
+            color: #555;
+            font-size: 14px;
+        }
+        
+        .form-group input {
+            width: 100%;
+            padding: 12px 16px;
+            border: 2px solid #e9ecef;
+            border-radius: 10px;
+            font-size: 15px;
+            outline: none;
+            transition: border-color 0.3s;
+        }
+        
+        .form-group input:focus {
+            border-color: #667eea;
+        }
+        
+        .btn-primary {
+            width: 100%;
+            padding: 14px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            border-radius: 10px;
+            font-size: 16px;
+            cursor: pointer;
+            transition: transform 0.2s;
+        }
+        
+        .btn-primary:hover { transform: translateY(-2px); }
+        .btn-primary:disabled { opacity: 0.6; cursor: not-allowed; }
+        
+        .auth-switch {
+            text-align: center;
+            margin-top: 20px;
+            font-size: 14px;
+            color: #666;
+        }
+        
+        .auth-switch a {
+            color: #667eea;
+            cursor: pointer;
+            text-decoration: underline;
+        }
+        
+        .error-message {
+            background: #ffebee;
+            color: #c62828;
+            padding: 10px 15px;
+            border-radius: 8px;
+            margin-bottom: 15px;
+            font-size: 13px;
+        }
+        
+        .success-message {
+            background: #e8f5e9;
+            color: #2e7d32;
+            padding: 10px 15px;
+            border-radius: 8px;
+            margin-bottom: 15px;
+            font-size: 13px;
+        }
+        
+        .hidden { display: none !important; }
+        
+        .example-chips {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            margin-top: 10px;
+        }
+        
+        .chip {
+            padding: 6px 12px;
+            background: #e9ecef;
+            border-radius: 15px;
+            font-size: 13px;
+            cursor: pointer;
+        }
+        
+        .chip:hover { background: #667eea; color: white; }
+    </style>
+</head>
+<body>
+    <!-- 登录/注册界面 -->
+    <div id="auth-section" class="container">
+        <div class="auth-container">
+            <div class="auth-box">
+                <h2 id="auth-title">登录</h2>
+                <div id="auth-message"></div>
+                <form id="auth-form">
+                    <div class="form-group">
+                        <label>用户名</label>
+                        <input type="text" id="username" placeholder="请输入用户名" required>
+                    </div>
+                    <div class="form-group">
+                        <label>密码</label>
+                        <input type="password" id="password" placeholder="请输入密码" required>
+                    </div>
+                    <button type="submit" class="btn-primary" id="auth-btn">登录</button>
+                </form>
+                <div class="auth-switch">
+                    <span id="auth-switch-text">还没有账号？</span>
+                    <a onclick="toggleAuthMode()" id="auth-switch-link">立即注册</a>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 主应用界面 -->
+    <div id="app-section" class="container hidden">
+        <div class="header">
+            <h1>LangChain Agent V2</h1>
+            <span class="badge">多用户独立记忆库</span>
+        </div>
+        
+        <div class="user-info">
+            <span>当前用户：<span class="username" id="current-username">-</span></span>
+            <button class="btn-small" onclick="logout()">退出登录</button>
+        </div>
+        
+        <div class="stats-bar">
+            <div class="stat-item">
+                <div class="stat-value" id="memory-count">-</div>
+                <div class="stat-label">我的记忆</div>
+            </div>
+            <div class="stat-item">
+                <div class="stat-value" id="current-date">-</div>
+                <div class="stat-label">当前日期</div>
+            </div>
+            <div class="stat-item">
+                <div class="stat-value">GLM-4</div>
+                <div class="stat-label">AI模型</div>
+            </div>
+        </div>
+        
+        <div class="chat-container" id="chat-container">
+            <div style="text-align: center; padding: 40px; color: #6c757d;">
+                <h3>欢迎使用智能记忆助手</h3>
+                <p>每个用户都有独立的记忆库，互不影响</p>
+                <div class="example-chips">
+                    <div class="chip" onclick="setInput('帮我记住我今天想去图书馆')">记住想去图书馆</div>
+                    <div class="chip" onclick="setInput('我几号要去校医院？')">查询校医院</div>
+                    <div class="chip" onclick="setInput('我刚才问你的是什么')">测试上下文</div>
+                    <div class="chip" onclick="setInput('删除我关于医院的记忆')">删除记忆</div>
+                </div>
+            </div>
+        </div>
+        
+        <div class="input-container">
+            <div class="input-wrapper">
+                <input type="text" id="message-input" 
+                       placeholder="输入消息..." 
+                       onkeypress="handleKeyPress(event)">
+                <button id="clear-btn" onclick="clearSession()">清除上下文</button>
+                <button id="send-btn" onclick="sendMessage()">发送</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let isLoginMode = true;
+        let currentUser = null;
+
+        // 页面加载时检查登录状态
+        window.onload = function() {
+            checkAuth();
+        };
+
+        // 切换登录/注册模式
+        function toggleAuthMode() {
+            isLoginMode = !isLoginMode;
+            document.getElementById('auth-title').textContent = isLoginMode ? '登录' : '注册';
+            document.getElementById('auth-btn').textContent = isLoginMode ? '登录' : '注册';
+            document.getElementById('auth-switch-text').textContent = isLoginMode ? '还没有账号？' : '已有账号？';
+            document.getElementById('auth-switch-link').textContent = isLoginMode ? '立即注册' : '立即登录';
+            document.getElementById('auth-message').innerHTML = '';
+        }
+
+        // 表单提交
+        document.getElementById('auth-form').onsubmit = function(e) {
+            e.preventDefault();
+            const username = document.getElementById('username').value.trim();
+            const password = document.getElementById('password').value.trim();
+            
+            if (isLoginMode) {
+                login(username, password);
+            } else {
+                register(username, password);
+            }
+        };
+
+        // 注册
+        function register(username, password) {
+            fetch('/api/register', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ username, password })
+            })
+            .then(res => res.json())
+            .then(data => {
+                if (data.success) {
+                    showMessage('注册成功，请登录', 'success');
+                    toggleAuthMode();
+                } else {
+                    showMessage(data.error, 'error');
+                }
+            });
+        }
+
+        // 登录
+        function login(username, password) {
+            fetch('/api/login', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ username, password })
+            })
+            .then(res => res.json())
+            .then(data => {
+                if (data.success) {
+                    currentUser = data;
+                    showApp();
+                } else {
+                    showMessage(data.error, 'error');
+                }
+            });
+        }
+
+        // 登出
+        function logout() {
+            fetch('/api/logout', { method: 'POST' })
+                .then(() => {
+                    currentUser = null;
+                    showAuth();
+                });
+        }
+
+        // 检查登录状态
+        function checkAuth() {
+            fetch('/api/check_auth')
+                .then(res => res.json())
+                .then(data => {
+                    if (data.is_logged_in) {
+                        currentUser = data;
+                        showApp();
+                    } else {
+                        showAuth();
+                    }
+                });
+        }
+
+        // 显示登录界面
+        function showAuth() {
+            document.getElementById('auth-section').classList.remove('hidden');
+            document.getElementById('app-section').classList.add('hidden');
+            document.getElementById('username').value = '';
+            document.getElementById('password').value = '';
+        }
+
+        // 显示主应用
+        function showApp() {
+            document.getElementById('auth-section').classList.add('hidden');
+            document.getElementById('app-section').classList.remove('hidden');
+            document.getElementById('current-username').textContent = currentUser.username;
+            fetchStats();
+        }
+
+        // 显示消息
+        function showMessage(msg, type) {
+            const div = document.getElementById('auth-message');
+            div.className = type === 'error' ? 'error-message' : 'success-message';
+            div.textContent = msg;
+        }
+
+        // 获取统计
+        function fetchStats() {
+            fetch('/api/stats')
+                .then(res => res.json())
+                .then(data => {
+                    if (data.success) {
+                        document.getElementById('current-date').textContent = data.current_date.slice(5);
+                        if (data.stats) {
+                            document.getElementById('memory-count').textContent = data.stats.total_memories || 0;
+                        }
+                    }
+                });
+        }
+
+        // 设置输入
+        function setInput(text) {
+            document.getElementById('message-input').value = text;
+            document.getElementById('message-input').focus();
+        }
+
+        // 按键处理
+        function handleKeyPress(e) {
+            if (e.key === 'Enter') sendMessage();
+        }
+
+        // 发送消息
+        function sendMessage() {
+            const input = document.getElementById('message-input');
+            const message = input.value.trim();
+            if (!message) return;
+
+            addMessage(message, 'user');
+            input.value = '';
+
+            const loadingId = addLoading();
+            document.getElementById('send-btn').disabled = true;
+
+            fetch('/api/chat', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ message })
+            })
+            .then(res => res.json())
+            .then(data => {
+                removeLoading(loadingId);
+                if (data.success) {
+                    addMessage(data.response, 'assistant');
+                    fetchStats();
+                } else {
+                    addError(data.error);
+                }
+            })
+            .catch(err => {
+                removeLoading(loadingId);
+                addError('网络错误: ' + err.message);
+            })
+            .finally(() => {
+                document.getElementById('send-btn').disabled = false;
+            });
+        }
+
+        // 清除会话
+        function clearSession() {
+            fetch('/api/clear_session', { method: 'POST' })
+                .then(() => {
+                    document.getElementById('chat-container').innerHTML = `
+                        <div style="text-align: center; padding: 40px; color: #6c757d;">
+                            <h3>上下文已清除</h3>
+                            <p>开始新的对话吧</p>
+                        </div>
+                    `;
+                });
+        }
+
+        // 添加消息
+        function addMessage(text, role) {
+            const container = document.getElementById('chat-container');
+            const welcome = container.querySelector('[style*="text-align: center"]');
+            if (welcome) welcome.remove();
+
+            const div = document.createElement('div');
+            div.className = `message ${role}`;
+            div.innerHTML = `
+                <div class="avatar">${role === 'user' ? '我' : 'AI'}</div>
+                <div class="message-content">${text}</div>
+            `;
+            container.appendChild(div);
+            container.scrollTop = container.scrollHeight;
+        }
+
+        // 添加错误
+        function addError(error) {
+            const container = document.getElementById('chat-container');
+            const div = document.createElement('div');
+            div.className = 'error-message';
+            div.style.margin = '10px 0';
+            div.textContent = '错误: ' + error;
+            container.appendChild(div);
+            container.scrollTop = container.scrollHeight;
+        }
+
+        // 添加加载
+        function addLoading() {
+            const container = document.getElementById('chat-container');
+            const div = document.createElement('div');
+            div.className = 'message assistant';
+            div.id = 'loading-' + Date.now();
+            div.innerHTML = `
+                <div class="avatar">AI</div>
+                <div class="message-content">
+                    <div class="loading"><span>●</span><span>●</span><span>●</span></div>
+                </div>
+            `;
+            container.appendChild(div);
+            container.scrollTop = container.scrollHeight;
+            return div.id;
+        }
+
+        // 移除加载
+        function removeLoading(id) {
+            const el = document.getElementById(id);
+            if (el) el.remove();
+        }
+    </script>
+</body>
+</html>
