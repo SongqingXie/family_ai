@@ -32,7 +32,29 @@ from memory_manager_zhipu_v2 import get_memory_manager, MemoryManager
 app = Flask(__name__)
 app.secret_key = 'your-secret-key-change-this-in-production'
 
-ZHIPU_API_KEY = "2fb4f7e613b14a8c8d0ffefd04bbcf0d.W0UXiNrd8LeWdexp"
+def _get_float_env(name: str, default: float) -> float:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    try:
+        return float(value)
+    except ValueError:
+        return default
+
+
+# LLM (chat model) config: uses OpenAI-compatible APIs.
+# For Doubao on Volcengine Ark:
+# - LLM_BASE_URL usually: https://ark.cn-beijing.volces.com/api/v3
+# - LLM_MODEL should be your endpoint ID (starts with ep-), not a raw model name.
+LLM_PROVIDER = os.getenv("LLM_PROVIDER", "doubao").strip().lower()
+LLM_API_KEY = os.getenv("LLM_API_KEY", "").strip()
+LLM_BASE_URL = os.getenv("LLM_BASE_URL", "https://ark.cn-beijing.volces.com/api/v3").strip()
+LLM_MODEL = os.getenv("LLM_MODEL", "").strip()
+LLM_TEMPERATURE = _get_float_env("LLM_TEMPERATURE", 0.7)
+
+# Embedding config for memory module (still using Zhipu embedding here).
+ZHIPU_EMBEDDING_API_KEY = os.getenv("ZHIPU_API_KEY", "").strip()
+EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "embedding-3").strip()
 
 # 数据存储路径
 DATA_DIR = "./familyAi/Langchainwithmemory/user_data"
@@ -75,7 +97,6 @@ def create_user(username: str, password: str) -> Dict:
     users[username] = {
         "user_id": user_id,
         "username": username,
-        "password": password,
         "password_hash": hash_password(password),
         "created_at": datetime.now().isoformat(),
         "last_login": None
@@ -126,11 +147,18 @@ def login_required(f):
 # 4. 使用 ChatOpenAI 配置智谱AI
 # ========================================
 
+if not LLM_API_KEY:
+    raise ValueError("Missing env var: LLM_API_KEY")
+if not LLM_MODEL:
+    raise ValueError("Missing env var: LLM_MODEL (Doubao should use endpoint id like ep-xxxx)")
+if not ZHIPU_EMBEDDING_API_KEY:
+    raise ValueError("Missing env var: ZHIPU_API_KEY (used by memory embedding)")
+
 llm = ChatOpenAI(
-    model="glm-4",
-    api_key=ZHIPU_API_KEY,
-    base_url="https://open.bigmodel.cn/api/paas/v4/",
-    temperature=0.7
+    model=LLM_MODEL,
+    api_key=LLM_API_KEY,
+    base_url=LLM_BASE_URL,
+    temperature=LLM_TEMPERATURE
 )
 
 
@@ -151,8 +179,8 @@ def add_memory_func(content: str, user_id: str = None) -> str:
         
         # 获取当前用户的记忆管理器
         mm = get_memory_manager(
-            zhipu_api_key=ZHIPU_API_KEY,
-            embedding_model="embedding-3",
+            zhipu_api_key=ZHIPU_EMBEDDING_API_KEY,
+            embedding_model=EMBEDDING_MODEL,
             user_id=user_id  # 传入用户ID
         )
         
@@ -176,8 +204,8 @@ def query_memory_func(query: str, user_id: str = None) -> str:
     """工具: 查询记忆（带用户ID）"""
     try:
         mm = get_memory_manager(
-            zhipu_api_key=ZHIPU_API_KEY,
-            embedding_model="embedding-3",
+            zhipu_api_key=ZHIPU_EMBEDDING_API_KEY,
+            embedding_model=EMBEDDING_MODEL,
             user_id=user_id
         )
         results = mm.query_memory(query, top_k=5)
@@ -214,8 +242,8 @@ def delete_memory_func(memory_id: str, user_id: str = None) -> str:
             return f"无效的记忆ID，请提供8位字母数字组合的ID"
         
         mm = get_memory_manager(
-            zhipu_api_key=ZHIPU_API_KEY,
-            embedding_model="embedding-3",
+            zhipu_api_key=ZHIPU_EMBEDDING_API_KEY,
+            embedding_model=EMBEDDING_MODEL,
             user_id=user_id
         )
         success = mm.delete_memory(cleaned_id)
@@ -469,8 +497,8 @@ def get_memories():
     try:
         user_id = session['user_id']
         mm = get_memory_manager(
-            zhipu_api_key=ZHIPU_API_KEY,
-            embedding_model="embedding-3",
+            zhipu_api_key=ZHIPU_EMBEDDING_API_KEY,
+            embedding_model=EMBEDDING_MODEL,
             user_id=user_id
         )
         
@@ -501,8 +529,8 @@ def get_stats():
     try:
         user_id = session['user_id']
         mm = get_memory_manager(
-            zhipu_api_key=ZHIPU_API_KEY,
-            embedding_model="embedding-3",
+            zhipu_api_key=ZHIPU_EMBEDDING_API_KEY,
+            embedding_model=EMBEDDING_MODEL,
             user_id=user_id
         )
         stats = mm.get_stats() if hasattr(mm, 'get_stats') else {}
@@ -550,10 +578,14 @@ if __name__ == '__main__':
     current_date = datetime.now().strftime("%Y年%m月%d日")
     
     print("=" * 60)
-    print("LangChain ReAct Agent - Flask Web Server V2")
+    print("LangChain ReAct Agent - Flask Web Server V3")
     print("=" * 60)
     print(f"Current Date: {current_date}")
     print("Features: Multi-User + Auth + Independent Memory")
+    print(f"LLM Provider: {LLM_PROVIDER}")
+    print(f"LLM Model: {LLM_MODEL}")
+    print(f"LLM Base URL: {LLM_BASE_URL}")
+    print(f"Embedding Model: {EMBEDDING_MODEL}")
     print("-" * 60)
     print("Access URLs:")
     print("   Local:   http://127.0.0.1:5000")
