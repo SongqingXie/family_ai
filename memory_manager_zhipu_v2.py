@@ -286,7 +286,7 @@ class MemoryManager:
         return results
     
     def delete_memory(self, memory_id: str) -> bool:
-        """删除记忆（标记删除）"""
+        """删除记忆（物理删除并重建索引）"""
         # 先去除可能的空白字符
         memory_id = memory_id.strip()
         
@@ -296,12 +296,10 @@ class MemoryManager:
         
         found = False
         
-        # 1. 检查是否在 memories 中
+        # 1. 检查是否在 memories 中（物理删除，而非仅标记）
         if memory_id in self.memories:
-            print(f"  [删除] 在 memories 中找到 ID，标记删除")
-            self.memories[memory_id]["deleted"] = True
-            self.memories[memory_id]["deleted_at"] = datetime.now().isoformat()
-            self._save_memories()
+            print(f"  [删除] 在 memories 中找到 ID，执行物理删除")
+            del self.memories[memory_id]
             found = True
         
         # 2. 检查是否在 id_mapping 中（即使不在 memories 中）
@@ -312,6 +310,9 @@ class MemoryManager:
             found = True
         
         if found:
+            # 统一重建，确保 FAISS / id_mapping 与 memories 严格一致
+            self._save_memories()
+            self._rebuild_all_vectors()
             print(f"  [成功] 记忆 {memory_id} 已删除")
             return True
         else:
@@ -365,7 +366,12 @@ class MemoryManager:
             self._save_id_mapping()
         
         # 2. 检查 memories 中有多余的 ID（不在 id_mapping 中）
-        ids_only_in_memories = set(self.memories.keys()) - set(self.id_mapping.keys())
+        # 仅处理未删除数据，避免把历史软删除数据重建回向量索引
+        active_memory_ids = {
+            mid for mid, mem in self.memories.items()
+            if not mem.get("deleted", False)
+        }
+        ids_only_in_memories = active_memory_ids - set(self.id_mapping.keys())
         if ids_only_in_memories:
             print(f"[Sync] 警告: memories 中有 {len(ids_only_in_memories)} 个 ID 不在 id_mapping 中")
             print(f"[Sync] 正在重建这些记忆的向量索引...")
@@ -410,6 +416,9 @@ class MemoryManager:
                 continue
             
             memory = self.memories[mid]
+            if memory.get("deleted", False):
+                print(f"[Sync] 跳过已删除记忆: {mid}")
+                continue
             content = memory.get("content", "")
             
             if not content:
