@@ -285,6 +285,132 @@ class MemoryManager:
         
         return results
     
+    def query_memory_by_time(self, time_query: str) -> List[Dict]:
+        """
+        按时间查询记忆
+        
+        支持的时间格式：
+        - "2026年03月14日" / "2026-03-14" / "3月14日" / "3月14号"
+        - "昨天"、"前天"、"今天"
+        - "上周"、"上个月"
+        
+        Args:
+            time_query: 时间查询字符串
+            
+        Returns:
+            匹配该时间段的记忆列表
+        """
+        if not self.memories:
+            return []
+        
+        # 解析时间查询
+        target_dates = self._parse_time_query(time_query)
+        if not target_dates:
+            return []
+        
+        # 遍历所有记忆，匹配 date_label
+        results = []
+        for memory_id, memory in self.memories.items():
+            if memory.get('deleted', False):
+                continue
+                
+            date_label = memory.get('date_label', '')
+            created_at = memory.get('created_at', '')
+            
+            # 匹配 date_label 或 created_at 的日期部分
+            match = False
+            for target_date in target_dates:
+                # 直接匹配 date_label
+                if target_date in date_label:
+                    match = True
+                    break
+                # 匹配 created_at 的日期部分 (ISO格式: 2026-03-14T10:30:00)
+                if target_date in created_at[:10]:
+                    match = True
+                    break
+            
+            if match:
+                mem_copy = memory.copy()
+                mem_copy['id'] = memory_id
+                mem_copy['match_type'] = 'time_match'
+                results.append(mem_copy)
+        
+        # 按创建时间排序（最新的在前）
+        results.sort(key=lambda x: x.get('created_at', ''), reverse=True)
+        
+        return results
+    
+    def _parse_time_query(self, time_query: str) -> List[str]:
+        """
+        解析时间查询字符串，返回可能匹配的日期格式列表
+        
+        Returns:
+            可能匹配的日期字符串列表，如 ["2026年03月14日", "2026-03-14"]
+        """
+        time_query = time_query.strip()
+        now = datetime.now()
+        targets = []
+        
+        # 处理相对时间
+        if time_query in ['今天', '今日']:
+            date_str = now.strftime('%Y年%m月%d日')
+            targets.append(date_str)
+            targets.append(now.strftime('%Y-%m-%d'))
+        elif time_query in ['昨天', '昨日']:
+            from datetime import timedelta
+            yesterday = now - timedelta(days=1)
+            date_str = yesterday.strftime('%Y年%m月%d日')
+            targets.append(date_str)
+            targets.append(yesterday.strftime('%Y-%m-%d'))
+        elif time_query in ['前天']:
+            from datetime import timedelta
+            day_before = now - timedelta(days=2)
+            date_str = day_before.strftime('%Y年%m月%d日')
+            targets.append(date_str)
+            targets.append(day_before.strftime('%Y-%m-%d'))
+        else:
+            # 尝试解析绝对时间
+            # 格式: "3月14日" 或 "3月14号"
+            import re
+            
+            # 匹配 "3月14日" / "3月14号" / "03月14日"
+            pattern1 = r'(\d{1,2})月(\d{1,2})[日号]'
+            match = re.search(pattern1, time_query)
+            if match:
+                month = int(match.group(1))
+                day = int(match.group(2))
+                year = now.year
+                
+                # 如果月份大于当前月，可能是去年的
+                if month > now.month:
+                    year -= 1
+                
+                date_str = f"{year}年{month:02d}月{day:02d}日"
+                targets.append(date_str)
+                targets.append(f"{year}-{month:02d}-{day:02d}")
+            
+            # 匹配完整日期 "2026年03月14日"
+            pattern2 = r'(\d{4})年(\d{1,2})月(\d{1,2})[日号]'
+            match = re.search(pattern2, time_query)
+            if match:
+                year = match.group(1)
+                month = match.group(2).zfill(2)
+                day = match.group(3).zfill(2)
+                targets.append(f"{year}年{month}月{day}日")
+                targets.append(f"{year}-{month}-{day}")
+            
+            # 匹配 "2026-03-14"
+            pattern3 = r'(\d{4})-(\d{2})-(\d{2})'
+            match = re.search(pattern3, time_query)
+            if match:
+                year = match.group(1)
+                month = match.group(2)
+                day = match.group(3)
+                targets.append(f"{year}年{month}月{day}日")
+                targets.append(f"{year}-{month}-{day}")
+        
+        return list(set(targets))
+    
     def delete_memory(self, memory_id: str) -> bool:
         """删除记忆（物理删除并重建索引）"""
         # 先去除可能的空白字符

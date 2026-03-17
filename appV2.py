@@ -32,8 +32,11 @@ from memory_manager_zhipu_v2 import get_memory_manager, MemoryManager
 app = Flask(__name__)
 app.secret_key = 'your-secret-key-change-this-in-production'
 
-ZHIPU_API_KEY = "2fb4f7e613b14a8c8d0ffefd04bbcf0d.W0UXiNrd8LeWdexp"
 
+ZHIPU_API_KEY = "2fb4f7e613b14a8c8d0ffefd04bbcf0d.W0UXiNrd8LeWdexp"
+ZHIPU_MODEL = "glm-4"
+ZHIPU_URL = "https://open.bigmodel.cn/api/paas/v4/"
+DOUBAO_API_KEY = "7240d4cd-7258-4536-a5cc-afe23a21d5f4"
 # 数据存储路径
 DATA_DIR = "./familyAi/Langchainwithmemory/user_data"
 os.makedirs(DATA_DIR, exist_ok=True)
@@ -127,9 +130,9 @@ def login_required(f):
 # ========================================
 
 llm = ChatOpenAI(
-    model="glm-4",
+    model=ZHIPU_MODEL,
     api_key=ZHIPU_API_KEY,
-    base_url="https://open.bigmodel.cn/api/paas/v4/",
+    base_url=ZHIPU_URL,
     temperature=0.7
 )
 
@@ -229,6 +232,34 @@ def delete_memory_func(memory_id: str, user_id: str = None) -> str:
         return f"删除失败: {str(e)}"
 
 
+def query_memory_by_time_func(time_query: str, user_id: str = None) -> str:
+    """工具: 按时间查询记忆（带用户ID）"""
+    try:
+        mm = get_memory_manager(
+            zhipu_api_key=ZHIPU_API_KEY,
+            embedding_model="embedding-3",
+            user_id=user_id
+        )
+        results = mm.query_memory_by_time(time_query)
+        
+        if not results:
+            return f"未找到 {time_query} 的记忆"
+        
+        response_parts = [f"找到 {len(results)} 条 {time_query} 的记忆："]
+        
+        for i, mem in enumerate(results, 1):
+            date_label = mem.get('date_label', '未知时间')
+            memory_id = mem.get('id', '未知ID')
+            response_parts.append(
+                f"\n【记忆{i}】ID: {memory_id} | 时间: {date_label} | 内容: {mem['content'][:50]}..."
+            )
+        
+        return "\n".join(response_parts)
+        
+    except Exception as e:
+        return f"按时间查询失败: {str(e)}"
+
+
 # 创建工具包装函数（在运行时注入 user_id）
 def create_tools_for_user(user_id: str):
     """为指定用户创建工具实例"""
@@ -241,16 +272,27 @@ def create_tools_for_user(user_id: str):
         Tool(
             name="QueryMemory",
             func=lambda x: query_memory_func(x, user_id),
-            description="""查询已有的记忆内容。
+            description="""查询已有的记忆内容（语义搜索）。
+适用于：根据内容描述查找相关记忆，如"我昨天吃了什么"、"关于AI的记忆"。
 返回包含记忆ID、内容、时间和相关度的结果。
 重要：返回的记忆ID可以用于 DeleteMemory 工具删除记忆。"""
+        ),
+        Tool(
+            name="QueryMemoryByTime",
+            func=lambda x: query_memory_by_time_func(x, user_id),
+            description="""按时间查询记忆（精准时间搜索）。
+适用于：用户明确指定时间的情况，如"3月14号的记忆"、"昨天的记录"。
+重要：输入必须是具体的日期格式，如"2026年03月12日"或"2026-03-12"。
+如果用户说"昨天"、"前天"、"今天"，请先计算具体日期再传入。
+例如：用户问"前天做了什么"，今天是2026年03月14日，则输入"2026年03月12日"。
+注意：如果用户没有明确指定时间，请使用 QueryMemory 进行语义搜索。"""
         ),
         Tool(
             name="DeleteMemory",
             func=lambda x: delete_memory_func(x, user_id),
             description="""删除指定的记忆。
 输入：记忆ID（8位字母数字组合，如abc12345）。
-注意：如果需要删除某条记忆但不知道ID，先使用 QueryMemory 查询获取ID。"""
+注意：如果需要删除某条记忆但不知道ID，先使用 QueryMemory 或 QueryMemoryByTime 查询获取ID。"""
         )
     ]
 
@@ -290,17 +332,26 @@ Begin!
 {chat_history}
 
 【重要提示】
-1. 如果用户的问题可以直接根据对话历史回答，不需要使用任何工具，请直接给出 Final Answer。
-2. 只有需要操作记忆（添加、查询、删除）时才使用工具。
-3. 如果不需要工具，不要写 "Action: 无" 或 "Action: None"，直接输出 Final Answer。
+1. 结合对话历史理解用户的意图，特别是代词指代（如"那件事"、"那个"、"它"等）。
+2. 如果用户的问题提到"那"、"这个"、"之前说的"等指代词，结合上文理解具体指什么。
+3. 只有需要操作记忆（添加、查询、删除）时才使用工具。
+4. 如果不需要工具，不要写 "Action: 无" 或 "Action: None"，直接输出 Final Answer。
+
+【查询记忆工具选择指南】
+- QueryMemory（语义搜索）：适用于用户描述内容但不指定具体时间的情况，如"关于AI的记忆"、"我吃了什么"。
+- QueryMemoryByTime（时间搜索）：适用于用户明确指定日期的情况。
+  * 输入格式：必须是具体日期，如"2026年03月14日"或"2026-03-14"。
+  * 相对时间转换：如果用户说"昨天"、"前天"、"今天"，请先计算成具体日期。
+    例如：今天是2026年03月14日，用户问"前天做了什么"，则传入"2026年03月12日"。
+  * 组合查询：如果用户说"前天关于AI的记忆"，先用 QueryMemoryByTime 查"2026年03月12日"，再从结果中找AI相关内容。
 
 【删除记忆流程】
 如果用户要删除某条记忆但没有提供ID：
-1. 先使用 QueryMemory 查询相关内容
+1. 先使用 QueryMemory 或 QueryMemoryByTime 查询相关内容
 2. 从查询结果中提取记忆ID（格式：ID: abc12345）
 3. 使用 DeleteMemory 删除该ID
 
-Question: {input}
+当前用户问题: {input}
 Thought:{agent_scratchpad}
 """)
         
@@ -308,7 +359,7 @@ Thought:{agent_scratchpad}
         memory = ConversationBufferWindowMemory(
             k=10,
             memory_key="chat_history",
-            return_messages=True
+            return_messages=False  # 返回字符串格式，便于插入Prompt
         )
         
         # 创建 ReAct Agent
@@ -556,9 +607,9 @@ if __name__ == '__main__':
     print("Features: Multi-User + Auth + Independent Memory")
     print("-" * 60)
     print("Access URLs:")
-    print("   Local:   http://127.0.0.1:5000")
-    print("   Network: http://0.0.0.0:5000")
+    print("   Local:   http://127.0.0.1:5001")
+    print("   Network: http://0.0.0.0:5001")
     print("=" * 60)
     print("Press Ctrl+C to stop\n")
     
-    app.run(host='0.0.0.0', port=5000, debug=True)
+    app.run(host='0.0.0.0', port=5001, debug=True)
