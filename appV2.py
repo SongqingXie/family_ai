@@ -183,7 +183,7 @@ def query_memory_func(query: str, user_id: str = None) -> str:
             embedding_model="embedding-3",
             user_id=user_id
         )
-        results = mm.query_memory(query, top_k=5)
+        results = mm.query_memory(query, top_k=20)
         
         if not results:
             return "未找到相关记忆"
