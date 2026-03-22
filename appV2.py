@@ -34,7 +34,7 @@ app.secret_key = 'your-secret-key-change-this-in-production'
 
 
 ZHIPU_API_KEY = "2fb4f7e613b14a8c8d0ffefd04bbcf0d.W0UXiNrd8LeWdexp"
-ZHIPU_MODEL = "glm-4"
+ZHIPU_MODEL = "glm-4.6v"
 ZHIPU_URL = "https://open.bigmodel.cn/api/paas/v4/"
 DOUBAO_API_KEY = "7240d4cd-7258-4536-a5cc-afe23a21d5f4"
 # 数据存储路径
@@ -311,20 +311,34 @@ def get_agent_for_user(user_id: str):
         tools = create_tools_for_user(user_id)
         
         # ReAct Agent 的 Prompt 模板
-        react_prompt = PromptTemplate.from_template("""Answer the following questions as best you can. You have access to the following tools:
+        react_prompt = PromptTemplate.from_template("""
+Answer the following questions as best you can. You have access to the following tools:
 
 {tools}
 
-Use the following format:
+You must follow EXACTLY one of these two output formats.
 
+Format A - when you need to use a tool:
 Question: the input question you must answer
-Thought: you should always think about what to do
-Action: the action to take, should be one of [{tool_names}]
+Thought: think about what to do
+Action: one of [{tool_names}]
 Action Input: the input to the action
-Observation: the result of the action
-... (this Thought/Action/Action Input/Observation can repeat N times)
+
+Format B - when you are ready to answer the user:
+Question: the input question you must answer
 Thought: I now know the final answer
 Final Answer: the final answer to the original input question
+
+Critical rules:
+1. In a single response, output EITHER:
+   - Thought + Action + Action Input
+   OR
+   - Thought + Final Answer
+   NEVER both.
+2. Do not write Observation by yourself. Observation is provided only by the system after a tool call.
+3. After writing Action and Action Input, stop immediately. Do not continue to Final Answer.
+4. Only write Final Answer when you are completely done and do not need any tool.
+5. If no tool is needed, output only Format B.
 
 Begin!
 
@@ -335,15 +349,12 @@ Begin!
 1. 结合对话历史理解用户的意图，特别是代词指代（如"那件事"、"那个"、"它"等）。
 2. 如果用户的问题提到"那"、"这个"、"之前说的"等指代词，结合上文理解具体指什么。
 3. 只有需要操作记忆（添加、查询、删除）时才使用工具。
-4. 如果不需要工具，不要写 "Action: 无" 或 "Action: None"，直接输出 Final Answer。
 
 【查询记忆工具选择指南】
 - QueryMemory（语义搜索）：适用于用户描述内容但不指定具体时间的情况，如"关于AI的记忆"、"我吃了什么"。
 - QueryMemoryByTime（时间搜索）：适用于用户明确指定日期的情况。
   * 输入格式：必须是具体日期，如"2026年03月14日"或"2026-03-14"。
   * 相对时间转换：如果用户说"昨天"、"前天"、"今天"，请先计算成具体日期。
-    例如：今天是2026年03月14日，用户问"前天做了什么"，则传入"2026年03月12日"。
-  * 组合查询：如果用户说"前天关于AI的记忆"，先用 QueryMemoryByTime 查"2026年03月12日"，再从结果中找AI相关内容。
 
 【删除记忆流程】
 如果用户要删除某条记忆但没有提供ID：
@@ -352,8 +363,9 @@ Begin!
 3. 使用 DeleteMemory 删除该ID
 
 当前用户问题: {input}
-Thought:{agent_scratchpad}
+{agent_scratchpad}
 """)
+        
         
         # 为每个用户创建独立的记忆（保留10轮对话）
         memory = ConversationBufferWindowMemory(
@@ -376,7 +388,13 @@ Thought:{agent_scratchpad}
             memory=memory,
             verbose=True,
             max_iterations=10,
-            handle_parsing_errors=True
+            handle_parsing_errors=(
+        "输出格式错误。请严格遵守以下规则："
+        "1. 如果调用工具，只输出 Thought、Action、Action Input；"
+        "2. 如果给最终答案，只输出 Thought、Final Answer；"
+        "3. 不要在同一次输出中同时包含 Action 和 Final Answer；"
+        "4. 不要自己生成 Observation。"
+    )
         )
         
         user_agents[user_id] = agent_executor
