@@ -569,11 +569,15 @@
             const welcome = container.querySelector('[style*="text-align: center"]');
             if (welcome) welcome.remove();
 
+            const displayText = role === 'assistant' && typeof text === 'string'
+                ? text.trim()
+                : text;
+
             const div = document.createElement('div');
             div.className = `message ${role}`;
             div.innerHTML = `
                 <div class="avatar">${role === 'user' ? '我' : 'AI'}</div>
-                <div class="message-content">${text}</div>
+                <div class="message-content">${displayText}</div>
             `;
             container.appendChild(div);
             container.scrollTop = container.scrollHeight;

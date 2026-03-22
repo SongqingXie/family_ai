@@ -16,10 +16,10 @@ from typing import List, Dict, Optional
 from flask import Flask, render_template, request, jsonify, session
 
 # LangChain 核心组件
-from langchain.agents import create_react_agent, AgentExecutor, Tool
-from langchain.prompts import PromptTemplate
+from langchain.agents import create_tool_calling_agent, AgentExecutor, Tool
 from langchain_openai import ChatOpenAI
 from langchain.memory import ConversationBufferWindowMemory
+from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 
 # 记忆管理器
 from memory_manager_zhipu_v2 import get_memory_manager, MemoryManager
@@ -133,7 +133,7 @@ llm = ChatOpenAI(
     model=ZHIPU_MODEL,
     api_key=ZHIPU_API_KEY,
     base_url=ZHIPU_URL,
-    temperature=0.7
+    temperature=0.2
 )
 
 
@@ -310,72 +310,47 @@ def get_agent_for_user(user_id: str):
     if user_id not in user_agents:
         tools = create_tools_for_user(user_id)
         
-        # ReAct Agent 的 Prompt 模板
-        react_prompt = PromptTemplate.from_template("""
-Answer the following questions as best you can. You have access to the following tools:
+        # Tool-calling Agent 的 Chat Prompt 模板
+        react_prompt = ChatPromptTemplate.from_messages([
+            (
+                "system",
+                """你是一个帮助用户管理长期记忆的中文助手。
 
-{tools}
-
-You must follow EXACTLY one of these two output formats.
-
-Format A - when you need to use a tool:
-Question: the input question you must answer
-Thought: think about what to do
-Action: one of [{tool_names}]
-Action Input: the input to the action
-
-Format B - when you are ready to answer the user:
-Question: the input question you must answer
-Thought: I now know the final answer
-Final Answer: the final answer to the original input question
-
-Critical rules:
-1. In a single response, output EITHER:
-   - Thought + Action + Action Input
-   OR
-   - Thought + Final Answer
-   NEVER both.
-2. Do not write Observation by yourself. Observation is provided only by the system after a tool call.
-3. After writing Action and Action Input, stop immediately. Do not continue to Final Answer.
-4. Only write Final Answer when you are completely done and do not need any tool.
-5. If no tool is needed, output only Format B.
-
-Begin!
-
-【对话历史上下文】
-{chat_history}
-
-【重要提示】
+请遵守以下规则：
 1. 结合对话历史理解用户的意图，特别是代词指代（如"那件事"、"那个"、"它"等）。
-2. 如果用户的问题提到"那"、"这个"、"之前说的"等指代词，结合上文理解具体指什么。
-3. 只有需要操作记忆（添加、查询、删除）时才使用工具。
+2. 只有在需要操作记忆（添加、查询、删除）时才调用工具。
+3. 如果用户只是普通聊天，不要调用工具。
+4. 如果用户要求记录一件事，只调用一次 AddMemory，除非用户明确要求记录多条不同内容。
+5. 当工具已经返回足够结果后，不要重复调用同一个工具验证同一件事。
 
-【查询记忆工具选择指南】
-- QueryMemory（语义搜索）：适用于用户描述内容但不指定具体时间的情况，如"关于AI的记忆"、"我吃了什么"。
-- QueryMemoryByTime（时间搜索）：适用于用户明确指定日期的情况。
-  * 输入格式：必须是具体日期，如"2026年03月14日"或"2026-03-14"。
-  * 相对时间转换：如果用户说"昨天"、"前天"、"今天"，请先计算成具体日期。
+查询工具选择规则：
+- QueryMemory：适用于用户描述内容但不指定具体时间的情况。
+- QueryMemoryByTime：适用于用户明确指定日期的情况。
+- 如果用户说"昨天"、"前天"、"今天"，先换算成具体日期再调用 QueryMemoryByTime。
 
-【删除记忆流程】
-如果用户要删除某条记忆但没有提供ID：
-1. 先使用 QueryMemory 或 QueryMemoryByTime 查询相关内容
-2. 从查询结果中提取记忆ID（格式：ID: abc12345）
-3. 使用 DeleteMemory 删除该ID
+删除记忆流程：
+如果用户要删除某条记忆但没有提供 ID：
+1. 先查询相关记忆
+2. 从结果中提取 ID
+3. 再调用 DeleteMemory
 
-当前用户问题: {input}
-{agent_scratchpad}
-""")
+在给用户最终回复时，直接给出自然、简洁的中文答案，不要暴露推理过程。""",
+            ),
+            MessagesPlaceholder(variable_name="chat_history"),
+            ("human", "{input}"),
+            MessagesPlaceholder(variable_name="agent_scratchpad"),
+        ])
         
         
         # 为每个用户创建独立的记忆（保留10轮对话）
         memory = ConversationBufferWindowMemory(
             k=10,
             memory_key="chat_history",
-            return_messages=False  # 返回字符串格式，便于插入Prompt
+            return_messages=True
         )
         
-        # 创建 ReAct Agent
-        agent = create_react_agent(
+        # 创建 Tool-calling Agent
+        agent = create_tool_calling_agent(
             llm=llm,
             tools=tools,
             prompt=react_prompt
@@ -386,15 +361,8 @@ Begin!
             agent=agent,
             tools=tools,
             memory=memory,
-            verbose=True,
-            max_iterations=10,
-            handle_parsing_errors=(
-        "输出格式错误。请严格遵守以下规则："
-        "1. 如果调用工具，只输出 Thought、Action、Action Input；"
-        "2. 如果给最终答案，只输出 Thought、Final Answer；"
-        "3. 不要在同一次输出中同时包含 Action 和 Final Answer；"
-        "4. 不要自己生成 Observation。"
-    )
+            verbose=False,
+            max_iterations=5
         )
         
         user_agents[user_id] = agent_executor
@@ -519,9 +487,11 @@ def chat():
             "input": enhanced_input
         })
         
+        clean_output = result['output'].strip() if isinstance(result.get('output'), str) else result.get('output')
+        
         return jsonify({
             'success': True,
-            'response': result['output']
+            'response': clean_output
         })
         
     except Exception as e:
